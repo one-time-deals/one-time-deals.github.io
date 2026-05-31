@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /*?utm_*
+Disallow: /*#admin
+
+Sitemap: https://one-time-deals.github.io/sitemap.xml
