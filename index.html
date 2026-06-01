@@ -1,1004 +1,393 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>One Time Deals — Curated Affiliate Offers & News</title>
+<title>One Time Deals — Auto-Discovered Posts</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-<meta name="google-site-verification" content="WgmYm7YX_01aLeewJJGPbHSKAqWO2mgTUfqTLpZjgZU" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
-/* ─── RESET & BASE ────────────────────────────────────────── */
 *{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{
-  font-family:'DM Sans',sans-serif;
-  background:#faf8f4;
-  color:#1a1208;
-  min-height:100vh;
-  -webkit-font-smoothing:antialiased;
-}
-
-/* ─── CSS VARIABLES ───────────────────────────────────────── */
-:root{
-  --ink:#1a1208;
-  --ink-muted:#7a6e5e;
-  --paper:#faf8f4;
-  --paper-warm:#f2ede4;
-  --paper-mid:#e8e0d0;
-  --cream:#fff9f0;
-  --fire:#e8440a;
-  --fire-soft:rgba(232,68,10,.1);
-  --fire-mid:rgba(232,68,10,.2);
-  --gold:#c4860a;
-  --gold-soft:rgba(196,134,10,.12);
-  --rule:#d6cdb8;
-  --card:#ffffff;
-  --shadow-sm:0 2px 8px rgba(26,18,8,.08);
-  --shadow:0 4px 20px rgba(26,18,8,.1);
-  --shadow-lg:0 12px 40px rgba(26,18,8,.14);
-  --r:6px;
-  --r-lg:12px;
-}
-
-/* ─── SCROLLBAR ───────────────────────────────────────────── */
-::-webkit-scrollbar{width:8px}
-::-webkit-scrollbar-track{background:var(--paper)}
-::-webkit-scrollbar-thumb{background:var(--rule);border-radius:999px}
-
-/* ─── HEADER ──────────────────────────────────────────────── */
-header{
-  background:var(--ink);
-  color:var(--paper);
-  position:sticky;top:0;z-index:50;
-  border-bottom:3px solid var(--fire);
-}
-.header-inner{
-  max-width:1240px;margin:0 auto;padding:0 24px;
-  display:flex;align-items:center;justify-content:space-between;gap:20px;
-  height:64px;
-}
-.brand{
-  display:flex;align-items:center;gap:14px;text-decoration:none;color:inherit;
-}
-.brand-mark{
-  width:44px;height:44px;border-radius:8px;
-  background:var(--fire);display:grid;place-items:center;
-  font-family:'DM Serif Display',serif;font-size:16px;font-weight:400;
-  color:white;letter-spacing:-.5px;flex-shrink:0;
-  box-shadow:0 0 0 2px rgba(255,255,255,.15);
-}
-.brand-name{
-  font-family:'DM Serif Display',serif;font-size:22px;letter-spacing:-.3px;
-  line-height:1.1;color:var(--paper);
-}
-.brand-sub{font-size:11px;color:rgba(255,255,255,.45);letter-spacing:.08em;text-transform:uppercase;margin-top:1px}
-.header-nav{display:flex;align-items:center;gap:6px}
-.nav-link{
-  padding:8px 14px;border-radius:var(--r);font-size:14px;font-weight:500;
-  color:rgba(255,255,255,.7);text-decoration:none;transition:.15s;
-  background:transparent;border:none;cursor:pointer;font-family:inherit;
-}
-.nav-link:hover,.nav-link.active{color:white;background:rgba(255,255,255,.1)}
-.nav-link.active{color:var(--fire);background:var(--fire-soft)}
-.admin-btn{
-  background:var(--fire);color:white;padding:8px 16px;
-  border-radius:var(--r);font-size:14px;font-weight:600;border:none;
-  cursor:pointer;font-family:inherit;transition:.15s;display:flex;align-items:center;gap:7px;
-}
-.admin-btn:hover{background:#c73808;transform:translateY(-1px)}
-.admin-btn svg{width:15px;height:15px}
-
-/* ─── MAIN TABS ───────────────────────────────────────────── */
-.tab-bar{
-  background:var(--cream);border-bottom:1px solid var(--rule);
-  position:sticky;top:64px;z-index:40;
-}
-.tab-bar-inner{
-  max-width:1240px;margin:0 auto;padding:0 24px;
-  display:flex;gap:0;
-}
-.tab{
-  padding:14px 20px;font-size:14px;font-weight:600;
-  color:var(--ink-muted);cursor:pointer;border:none;background:none;
-  font-family:inherit;border-bottom:3px solid transparent;margin-bottom:-1px;
-  transition:.15s;white-space:nowrap;display:flex;align-items:center;gap:8px;
-}
-.tab:hover{color:var(--ink)}
-.tab.active{color:var(--fire);border-bottom-color:var(--fire)}
-.tab-count{
-  background:var(--paper-mid);color:var(--ink-muted);
-  padding:2px 7px;border-radius:999px;font-size:11px;font-weight:700;
-  font-family:'JetBrains Mono',monospace;
-}
-.tab.active .tab-count{background:var(--fire-soft);color:var(--fire)}
-
-/* ─── MAIN LAYOUT ─────────────────────────────────────────── */
-main{max-width:1240px;margin:0 auto;padding:40px 24px 80px}
-
-/* ─── SECTION HEADING ─────────────────────────────────────── */
-.section-head{
-  display:flex;align-items:flex-end;justify-content:space-between;
-  gap:16px;margin-bottom:32px;padding-bottom:18px;
-  border-bottom:1px solid var(--rule);
-}
-.section-head h2{
-  font-family:'DM Serif Display',serif;font-size:32px;
-  letter-spacing:-.3px;line-height:1;
-}
-.section-head p{color:var(--ink-muted);font-size:14px;margin-top:4px}
-.section-eyebrow{
-  font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
-  color:var(--fire);font-family:'JetBrains Mono',monospace;
-  display:block;margin-bottom:4px;
-}
-
-/* ─── POSTS GRID ──────────────────────────────────────────── */
-.posts-grid{
-  display:grid;gap:20px;
-  grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
-}
-.post-card{
-  background:var(--card);border:1px solid var(--rule);border-radius:var(--r-lg);
-  overflow:hidden;display:flex;flex-direction:column;
-  box-shadow:var(--shadow-sm);transition:.22s ease;cursor:pointer;
-  text-decoration:none;color:inherit;
-}
-.post-card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg);border-color:var(--paper-mid)}
-.post-thumb{
-  aspect-ratio:16/9;background:var(--paper-warm);
-  position:relative;overflow:hidden;
-}
-.post-thumb img{width:100%;height:100%;object-fit:cover;transition:.3s ease}
-.post-card:hover .post-thumb img{transform:scale(1.03)}
-.post-thumb-placeholder{
-  width:100%;height:100%;display:grid;place-items:center;
-  background:linear-gradient(135deg,var(--paper-warm) 0%,var(--paper-mid) 100%);
-}
-.post-thumb-placeholder svg{opacity:.25;width:40px;height:40px}
-.post-category-badge{
-  position:absolute;top:12px;left:12px;
-  background:var(--ink);color:white;
-  padding:4px 10px;border-radius:999px;
-  font-size:11px;font-weight:700;letter-spacing:.05em;
-  font-family:'JetBrains Mono',monospace;
-}
-.post-featured-flag{
-  position:absolute;top:12px;right:12px;
-  background:var(--gold);color:white;
-  padding:4px 10px;border-radius:999px;
-  font-size:11px;font-weight:700;
-}
-.post-body{padding:18px;display:flex;flex-direction:column;gap:10px;flex:1}
-.post-meta{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink-muted)}
-.post-meta-sep{width:3px;height:3px;border-radius:50%;background:var(--rule)}
-.post-source{
-  font-family:'JetBrains Mono',monospace;font-size:11px;
-  color:var(--fire);font-weight:700;letter-spacing:.03em;
-}
-.post-title{
-  font-family:'DM Serif Display',serif;
-  font-size:18px;line-height:1.3;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-}
-.post-excerpt{
-  font-size:13px;color:var(--ink-muted);line-height:1.6;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-}
-.post-footer{
-  display:flex;align-items:center;justify-content:space-between;
-  margin-top:auto;padding-top:12px;border-top:1px solid var(--rule);
-}
-.post-tags{display:flex;gap:6px;flex-wrap:wrap}
-.post-tag{
-  background:var(--paper-warm);color:var(--ink-muted);
-  padding:3px 9px;border-radius:999px;font-size:11px;font-weight:500;
-}
-.post-arrow{
-  width:30px;height:30px;border-radius:50%;background:var(--paper-warm);
-  display:grid;place-items:center;flex-shrink:0;
-  transition:.2s;
-}
-.post-card:hover .post-arrow{background:var(--fire);color:white}
-.post-arrow svg{width:14px;height:14px}
-
-/* ─── EMPTY STATE ─────────────────────────────────────────── */
-.empty-state{
-  text-align:center;padding:100px 20px;
-  background:var(--cream);border:1px dashed var(--rule);
-  border-radius:var(--r-lg);
-}
-.empty-icon{
-  width:72px;height:72px;border-radius:50%;
-  background:var(--paper-warm);display:grid;place-items:center;margin:0 auto 20px;
-}
-.empty-icon svg{width:32px;height:32px;opacity:.5}
-.empty-state h3{font-family:'DM Serif Display',serif;font-size:24px;margin-bottom:8px}
-.empty-state p{color:var(--ink-muted);font-size:15px;max-width:380px;margin:0 auto 22px;line-height:1.6}
-.cta-btn{
-  display:inline-flex;align-items:center;gap:8px;
-  background:var(--fire);color:white;padding:12px 22px;
-  border-radius:var(--r);font-weight:600;font-size:15px;
-  text-decoration:none;border:none;cursor:pointer;font-family:inherit;
-  transition:.15s;
-}
-.cta-btn:hover{background:#c73808;transform:translateY(-1px)}
-
-/* ─── FILTERS ─────────────────────────────────────────────── */
-.filters-row{
-  display:flex;flex-wrap:wrap;gap:10px;margin-bottom:28px;align-items:center;
-}
-.filter-input{
-  flex:1;min-width:200px;padding:10px 14px;
-  border:1px solid var(--rule);border-radius:var(--r);
-  font:inherit;font-size:14px;background:var(--card);
-  color:var(--ink);outline:none;transition:.15s;
-}
-.filter-input:focus{border-color:var(--fire);box-shadow:0 0 0 3px var(--fire-soft)}
-.filter-select{
-  padding:10px 14px;border:1px solid var(--rule);border-radius:var(--r);
-  font:inherit;font-size:14px;background:var(--card);color:var(--ink);
-  outline:none;cursor:pointer;transition:.15s;
-}
-.filter-select:focus{border-color:var(--fire);box-shadow:0 0 0 3px var(--fire-soft)}
-.filter-count{
-  font-size:13px;color:var(--ink-muted);margin-left:auto;white-space:nowrap;
-  font-family:'JetBrains Mono',monospace;
-}
-
-/* ─── ADMIN PANEL ─────────────────────────────────────────── */
-#view-admin{display:none}
-.admin-layout{
-  display:grid;gap:28px;
-  grid-template-columns:1fr;
-}
-@media(min-width:980px){.admin-layout{grid-template-columns:1.1fr .9fr;align-items:start}}
-
-.admin-panel{
-  background:var(--card);border:1px solid var(--rule);
-  border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow-sm);
-}
-.admin-panel-head{
-  padding:18px 22px;border-bottom:1px solid var(--rule);
-  background:var(--paper-warm);display:flex;align-items:center;justify-content:space-between;
-}
-.admin-panel-head h2{font-family:'DM Serif Display',serif;font-size:20px;letter-spacing:-.2px}
-.admin-panel-body{padding:22px}
-
-/* Form */
-.form-row{display:grid;gap:14px;margin-bottom:14px}
-.form-row.cols-2{grid-template-columns:1fr 1fr}
-.form-group{display:flex;flex-direction:column;gap:6px}
-.form-label{font-size:12px;font-weight:700;color:var(--ink-muted);letter-spacing:.06em;text-transform:uppercase}
-.form-input,.form-select,.form-textarea{
-  padding:10px 12px;border:1px solid var(--rule);border-radius:var(--r);
-  font:inherit;font-size:14px;color:var(--ink);background:var(--paper);
-  outline:none;transition:.15s;width:100%;
-}
-.form-input:focus,.form-select:focus,.form-textarea:focus{
-  border-color:var(--fire);box-shadow:0 0 0 3px var(--fire-soft);background:white;
-}
-.form-textarea{resize:vertical;min-height:80px;line-height:1.5}
-.form-hint{font-size:11px;color:var(--ink-muted)}
-.form-check{display:flex;align-items:center;gap:8px;cursor:pointer}
-.form-check input{accent-color:var(--fire);width:15px;height:15px;cursor:pointer}
-.form-check span{font-size:13px;font-weight:500}
-
-.form-actions{display:flex;gap:10px;margin-top:20px;padding-top:18px;border-top:1px solid var(--rule)}
-.btn-save{
-  background:var(--ink);color:white;padding:11px 22px;
-  border-radius:var(--r);font-weight:700;font-size:14px;
-  border:none;cursor:pointer;font-family:inherit;transition:.15s;
-  display:flex;align-items:center;gap:7px;
-}
-.btn-save:hover{background:var(--fire)}
-.btn-cancel{
-  background:transparent;color:var(--ink-muted);padding:11px 16px;
-  border-radius:var(--r);font-weight:600;font-size:14px;
-  border:1px solid var(--rule);cursor:pointer;font-family:inherit;transition:.15s;
-}
-.btn-cancel:hover{background:var(--paper-warm);color:var(--ink)}
-
-/* Admin list */
-.admin-list{display:flex;flex-direction:column;gap:10px;max-height:680px;overflow:auto;padding:2px}
-.admin-post-item{
-  display:grid;grid-template-columns:72px 1fr auto;gap:12px;
-  align-items:center;padding:12px;border:1px solid var(--rule);
-  border-radius:var(--r);background:var(--paper);transition:.15s;
-}
-.admin-post-item:hover{border-color:var(--paper-mid);background:var(--cream)}
-.admin-post-thumb{
-  width:72px;height:48px;border-radius:6px;object-fit:cover;
-  background:var(--paper-warm);flex-shrink:0;
-}
-.admin-post-thumb-placeholder{
-  width:72px;height:48px;border-radius:6px;background:var(--paper-warm);
-  display:grid;place-items:center;
-}
-.admin-post-thumb-placeholder svg{width:20px;height:20px;opacity:.3}
-.admin-post-info{min-width:0}
-.admin-post-title{
-  font-weight:700;font-size:13px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  margin-bottom:3px;
-}
-.admin-post-meta{font-size:11px;color:var(--ink-muted);display:flex;gap:8px;align-items:center}
-.admin-post-status{
-  padding:2px 7px;border-radius:999px;font-size:10px;font-weight:700;
-  font-family:'JetBrains Mono',monospace;
-}
-.status-published{background:#dcfce7;color:#166534}
-.status-draft{background:var(--paper-mid);color:var(--ink-muted)}
-.admin-item-btns{display:flex;gap:6px;flex-shrink:0}
-.icon-btn{
-  width:32px;height:32px;border-radius:8px;border:1px solid var(--rule);
-  background:var(--card);cursor:pointer;display:grid;place-items:center;
-  transition:.15s;color:var(--ink-muted);
-}
-.icon-btn:hover{border-color:var(--fire);color:var(--fire);background:var(--fire-soft)}
-.icon-btn.del:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2}
-.icon-btn svg{width:14px;height:14px}
-
-/* ─── TOAST ───────────────────────────────────────────────── */
-.toast{
-  position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(20px);
-  background:var(--ink);color:white;padding:12px 20px;
-  border-radius:999px;font-weight:600;font-size:13px;
-  opacity:0;pointer-events:none;transition:.26s;z-index:999;
-  box-shadow:var(--shadow-lg);display:flex;align-items:center;gap:8px;
-  border:1px solid rgba(255,255,255,.1);
-}
-.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-.toast.success .toast-dot{background:#4ade80}
-.toast.error .toast-dot{background:#f87171}
-.toast-dot{width:8px;height:8px;border-radius:50%;background:var(--fire);flex-shrink:0}
-
-/* ─── ADMIN TOPBAR ────────────────────────────────────────── */
-.admin-topbar{
-  display:flex;align-items:center;justify-content:space-between;
-  gap:16px;margin-bottom:28px;flex-wrap:wrap;
-}
-.admin-topbar h1{font-family:'DM Serif Display',serif;font-size:28px;letter-spacing:-.3px}
-.admin-actions{display:flex;gap:8px;flex-wrap:wrap}
-.btn-sm{
-  padding:8px 14px;border-radius:var(--r);font-size:13px;font-weight:600;
-  border:1px solid var(--rule);background:var(--card);color:var(--ink);
-  cursor:pointer;font-family:inherit;transition:.15s;display:flex;align-items:center;gap:6px;
-}
-.btn-sm:hover{background:var(--paper-warm);border-color:var(--paper-mid)}
-.btn-sm svg{width:13px;height:13px}
-.btn-sm.danger{color:#dc2626;border-color:#fecaca}
-.btn-sm.danger:hover{background:#fef2f2}
-
-/* ─── NOTICE ──────────────────────────────────────────────── */
-.notice{
-  background:var(--fire-soft);border:1px solid var(--fire-mid);
-  padding:12px 16px;border-radius:var(--r);font-size:13px;
-  margin-bottom:22px;color:var(--ink);line-height:1.5;
-}
-.notice strong{color:var(--fire)}
-
-/* ─── BACK LINK ───────────────────────────────────────────── */
-.back-link{
-  display:inline-flex;align-items:center;gap:6px;
-  color:var(--ink-muted);font-size:14px;font-weight:500;
-  text-decoration:none;margin-bottom:24px;cursor:pointer;
-  border:none;background:none;font-family:inherit;padding:0;
-  transition:.15s;
-}
-.back-link:hover{color:var(--fire)}
-.back-link svg{width:14px;height:14px}
-
-/* ─── RESPONSIVE ──────────────────────────────────────────── */
-@media(max-width:640px){
-  .header-inner{height:56px}
-  .brand-sub{display:none}
-  .form-row.cols-2{grid-template-columns:1fr}
-  .section-head{flex-direction:column;align-items:flex-start}
-  .posts-grid{grid-template-columns:1fr}
-  main{padding:24px 16px 60px}
-}
+body{font-family:'DM Sans',sans-serif;background:#faf8f4;color:#1a1208}
+:root{--ink:#1a1208;--muted:#7a6e5e;--fire:#e8440a;--fire-soft:rgba(232,68,10,.1);--rule:#d6cdb8;--card:#fff;--warm:#f2ede4}
+header{background:var(--ink);color:#faf8f4;border-bottom:3px solid var(--fire);position:sticky;top:0;z-index:10}
+.header-inner{max-width:1240px;margin:0 auto;padding:0 24px;height:64px;display:flex;align-items:center}
+.brand{display:flex;gap:12px;align-items:center;text-decoration:none;color:inherit}
+.brand-mark{width:40px;height:40px;background:var(--fire);border-radius:8px;display:grid;place-items:center;font-family:'DM Serif Display',serif}
+.brand-name{font-family:'DM Serif Display',serif;font-size:20px}
+main{max-width:1240px;margin:0 auto;padding:40px 24px}
+h1{font-family:'DM Serif Display',serif;font-size:32px;margin-bottom:8px}
+.subtitle{color:var(--muted);margin-bottom:24px}
+.status{background:var(--fire-soft);border:1px solid rgba(232,68,10,.2);padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:24px;display:flex;gap:10px;align-items:center}
+.posts-grid{display:grid;gap:20px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+.card{background:var(--card);border:1px solid var(--rule);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;transition:.2s;text-decoration:none;color:inherit}
+.card:hover{transform:translateY(-3px);box-shadow:0 12px 30px rgba(0,0,0,.12)}
+.thumb{aspect-ratio:16/9;background:var(--warm);overflow:hidden}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.body{padding:16px;display:flex;flex-direction:column;gap:8px;flex:1}
+.meta{display:flex;gap:8px;font-size:12px;color:var(--muted);align-items:center}
+.source{font-family:'JetBrains Mono',monospace;color:var(--fire);font-weight:700;font-size:11px}
+.title{font-family:'DM Serif Display',serif;font-size:18px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.excerpt{font-size:13px;color:var(--muted);line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.footer{margin-top:auto;padding-top:10px;border-top:1px solid var(--rule);display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.badge{background:var(--ink);color:white;padding:3px 8px;border-radius:999px;font-size:10px;font-family:'JetBrains Mono',monospace}
+.spinner{width:18px;height:18px;border:2.5px solid var(--rule);border-top-color:var(--fire);border-radius:50%;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:80px 20px;color:var(--muted)}
 </style>
 </head>
 <body>
-
-<!-- ─── HEADER ──────────────────────────────────────────────── -->
 <header>
   <div class="header-inner">
-    <a class="brand" href="#" onclick="showView('home')">
+    <a class="brand" href="#">
       <div class="brand-mark">OTD</div>
-      <div>
-        <div class="brand-name">One Time Deals</div>
-        <div class="brand-sub">Curated affiliate offers &amp; news</div>
-      </div>
+      <div class="brand-name">One Time Deals</div>
     </a>
-    <nav class="header-nav">
-      <button class="nav-link active" id="nav-deals" onclick="showView('home');setActiveNav('nav-deals')">Deals</button>
-      <button class="nav-link" id="nav-posts" onclick="showView('posts');setActiveNav('nav-posts')">Posts</button>
-      <button class="admin-btn" onclick="showView('admin')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-        Admin
-      </button>
-    </nav>
   </div>
 </header>
 
-<!-- ─── MAIN ─────────────────────────────────────────────────── -->
 <main>
-
-  <!-- ══ HOME / DEALS VIEW ══════════════════════════════════════ -->
-  <div id="view-home">
-    <div class="section-head">
-      <div>
-        <span class="section-eyebrow">Featured Deals</span>
-        <h2>Today's Best Offers</h2>
-        <p style="color:var(--ink-muted);font-size:14px;margin-top:6px">Hand-picked, one-time affiliate offers — no subscriptions needed.</p>
-      </div>
-      <button class="cta-btn" onclick="showView('admin')">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-        Add a Deal
-      </button>
-    </div>
-
-    <div class="empty-state" id="deals-empty">
-      <div class="empty-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
-      </div>
-      <h3>No Deals Yet</h3>
-      <p>Head to the Admin panel to add your first affiliate deal and it'll appear right here.</p>
-      <button class="cta-btn" onclick="showView('admin')">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-        Go to Admin
-      </button>
-    </div>
+  <h1>Latest Posts</h1>
+  <p class="subtitle">Automatically discovering all .html pages in your repo</p>
+  
+  <div class="status" id="status">
+    <div class="spinner"></div>
+    <span>Scanning GitHub repo for .html files...</span>
   </div>
 
-  <!-- ══ POSTS VIEW ═════════════════════════════════════════════ -->
-  <div id="view-posts" style="display:none">
-    <div class="section-head">
-      <div>
-        <span class="section-eyebrow">News &amp; Updates</span>
-        <h2>Latest Posts</h2>
-        <p style="color:var(--ink-muted);font-size:14px;margin-top:6px">Curated articles, guides, and deal news.</p>
-      </div>
-    </div>
-
-    <div class="filters-row">
-      <input class="filter-input" type="search" id="posts-search" placeholder="Search posts by title, source, or tag…" oninput="renderPosts()">
-      <select class="filter-select" id="posts-cat" onchange="renderPosts()">
-        <option value="">All Categories</option>
-        <option>Tech</option>
-        <option>Finance</option>
-        <option>Lifestyle</option>
-        <option>Travel</option>
-        <option>Food</option>
-        <option>Health</option>
-        <option>Shopping</option>
-        <option>News</option>
-        <option>Other</option>
-      </select>
-      <select class="filter-select" id="posts-sort" onchange="renderPosts()">
-        <option value="newest">Newest First</option>
-        <option value="oldest">Oldest First</option>
-        <option value="featured">Featured First</option>
-      </select>
-      <span class="filter-count" id="posts-count">0 posts</span>
-    </div>
-
-    <div id="posts-grid" class="posts-grid"></div>
-
-    <div class="empty-state" id="posts-empty" style="display:none">
-      <div class="empty-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-      </div>
-      <h3>No Posts Yet</h3>
-      <p>Add your first post from the Admin panel. Posts will appear here once published.</p>
-      <button class="cta-btn" onclick="showView('admin');setAdminTab('posts')">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-        Add First Post
-      </button>
-    </div>
-  </div>
-
-  <!-- ══ ADMIN VIEW ═════════════════════════════════════════════ -->
-  <div id="view-admin" style="display:none">
-    <button class="back-link" onclick="showView('posts');setActiveNav('nav-posts')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-      Back to site
-    </button>
-
-    <!-- Admin tab bar -->
-    <div style="display:flex;gap:0;border-bottom:1px solid var(--rule);margin-bottom:28px">
-      <button class="tab active" id="admin-tab-posts" onclick="setAdminTab('posts')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Posts
-        <span class="tab-count" id="admin-posts-count">0</span>
-      </button>
-    </div>
-
-    <!-- POSTS ADMIN -->
-    <div id="admin-posts-section">
-      <div class="notice">
-        <strong>Admin Panel.</strong> Posts are saved to <strong>serverless persistent storage</strong> — they survive across sessions, devices, and browsers. Export JSON as an extra backup.
-      </div>
-
-      <div class="admin-topbar">
-        <h1>Manage Posts</h1>
-        <div class="admin-actions">
-          <button class="btn-sm" onclick="exportData()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Export
-          </button>
-          <label class="btn-sm" style="cursor:pointer">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Import
-            <input type="file" accept=".json" style="display:none" onchange="importData(event)">
-          </label>
-          <button class="btn-sm danger" onclick="clearAllPosts()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-            Clear All
-          </button>
-        </div>
-      </div>
-
-      <div class="admin-layout">
-        <!-- Form panel -->
-        <div class="admin-panel">
-          <div class="admin-panel-head">
-            <h2 id="form-title">New Post</h2>
-            <span id="form-mode-badge" style="font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--fire)">CREATE</span>
-          </div>
-          <div class="admin-panel-body">
-            <form id="post-form" onsubmit="savePost(event)" novalidate>
-
-              <div class="form-row">
-                <div class="form-group">
-                  <label class="form-label">Post Title *</label>
-                  <input class="form-input" id="f-title" required maxlength="160" placeholder="e.g., 10 Best Deal Sites in 2025">
-                </div>
-              </div>
-
-              <div class="form-row cols-2">
-                <div class="form-group">
-                  <label class="form-label">Source / Publisher</label>
-                  <input class="form-input" id="f-source" maxlength="80" placeholder="e.g., TechCrunch">
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Category</label>
-                  <select class="form-select" id="f-category">
-                    <option value="">— Pick one —</option>
-                    <option>Tech</option>
-                    <option>Finance</option>
-                    <option>Lifestyle</option>
-                    <option>Travel</option>
-                    <option>Food</option>
-                    <option>Health</option>
-                    <option>Shopping</option>
-                    <option>News</option>
-                    <option>Other</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="form-row">
-                <div class="form-group">
-                  <label class="form-label">Article / Affiliate Link *</label>
-                  <input class="form-input" id="f-link" required type="url" placeholder="https://example.com/your-post">
-                  <span class="form-hint">The external URL this post card will link to.</span>
-                </div>
-              </div>
-
-              <div class="form-row">
-                <div class="form-group">
-                  <label class="form-label">Thumbnail Image URL</label>
-                  <input class="form-input" id="f-image" type="url" placeholder="https://example.com/image.jpg">
-                  <span class="form-hint">Optional. Leave blank to show a placeholder.</span>
-                </div>
-              </div>
-
-              <div class="form-row">
-                <div class="form-group">
-                  <label class="form-label">Short Excerpt</label>
-                  <textarea class="form-textarea" id="f-excerpt" maxlength="240" placeholder="A 1–2 sentence summary of the post…"></textarea>
-                </div>
-              </div>
-
-              <div class="form-row cols-2">
-                <div class="form-group">
-                  <label class="form-label">Publish Date</label>
-                  <input class="form-input" id="f-date" type="date">
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Tags</label>
-                  <input class="form-input" id="f-tags" placeholder="deals, tech, savings" maxlength="120">
-                  <span class="form-hint">Comma-separated</span>
-                </div>
-              </div>
-
-              <div class="form-row">
-                <div style="display:flex;gap:20px;flex-wrap:wrap">
-                  <label class="form-check">
-                    <input type="checkbox" id="f-published" checked>
-                    <span>Published (visible on site)</span>
-                  </label>
-                  <label class="form-check">
-                    <input type="checkbox" id="f-featured">
-                    <span>Mark as Featured</span>
-                  </label>
-                </div>
-              </div>
-
-              <div class="form-actions">
-                <button type="submit" class="btn-save">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                  <span id="save-label">Save Post</span>
-                </button>
-                <button type="button" class="btn-cancel" onclick="resetForm()">Cancel / New</button>
-              </div>
-            </form>
-          </div>
-        </div>
-
-        <!-- List panel -->
-        <div class="admin-panel">
-          <div class="admin-panel-head">
-            <h2>All Posts</h2>
-            <span id="list-count" style="font-size:12px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">0 total</span>
-          </div>
-          <div class="admin-panel-body" style="padding:14px">
-            <div id="admin-post-list" class="admin-list">
-              <div style="text-align:center;padding:40px 0;color:var(--ink-muted);font-size:14px">
-                No posts yet. Create your first one →
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
+  <div id="grid" class="posts-grid"></div>
+  <div id="empty" class="empty" style="display:none"></div>
 </main>
 
-<!-- ─── TOAST ─────────────────────────────────────────────────── -->
-<div class="toast" id="toast">
-  <span class="toast-dot"></span>
-  <span id="toast-msg"></span>
-</div>
-
 <script>
-/* ──────────────────────────────────────────────────────────────
-   STATE & STORAGE  (window.storage — serverless persistent)
-────────────────────────────────────────────────────────────── */
-const POSTS_KEY = 'otd:posts';
+// ========== CONFIG ==========
+const REPO_OWNER = 'one-time-deals';
+const REPO_NAME = 'one-time-deals.github.io';
+const EXCLUDE = ['index.html','404.html','index.htm'];
+// ============================
 
-// In-memory cache so sync reads stay fast
-let _cache = null;
-
-async function loadPosts(){
-  if(_cache) return _cache;
+async function discoverHtmlFiles(){
   try{
-    const r = await window.storage.get(POSTS_KEY);
-    _cache = r ? JSON.parse(r.value) : [];
-  }catch(e){ _cache = []; }
-  return _cache;
-}
-
-async function savePosts(arr){
-  _cache = arr;
-  try{
-    await window.storage.set(POSTS_KEY, JSON.stringify(arr));
-  }catch(e){ console.error('Storage write failed',e); }
-  syncCounts(arr);
-}
-
-let editingId = null;
-
-/* ──────────────────────────────────────────────────────────────
-   VIEW ROUTING
-────────────────────────────────────────────────────────────── */
-function showView(v){
-  ['home','posts','admin'].forEach(id=>{
-    document.getElementById('view-'+id).style.display = id===v ? 'block' : 'none';
-  });
-  if(v==='posts') renderPosts();
-  if(v==='admin'){ renderAdminList(); resetForm(); }
-  window.scrollTo({top:0,behavior:'smooth'});
-}
-
-function setActiveNav(id){
-  document.querySelectorAll('.nav-link').forEach(el=>el.classList.remove('active'));
-  const el = document.getElementById(id);
-  if(el) el.classList.add('active');
-}
-
-function setAdminTab(tab){
-  document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active'));
-  document.getElementById('admin-tab-'+tab)?.classList.add('active');
-}
-
-/* ──────────────────────────────────────────────────────────────
-   RENDER: PUBLIC POSTS
-────────────────────────────────────────────────────────────── */
-async function renderPosts(){
-  const q     = (document.getElementById('posts-search')?.value||'').toLowerCase();
-  const cat   = document.getElementById('posts-cat')?.value||'';
-  const sort  = document.getElementById('posts-sort')?.value||'newest';
-  const grid  = document.getElementById('posts-grid');
-  const empty = document.getElementById('posts-empty');
-  const count = document.getElementById('posts-count');
-
-  let posts = (await loadPosts()).filter(p=>p.published);
-
-  if(q) posts = posts.filter(p=>
-    p.title.toLowerCase().includes(q) ||
-    (p.source||'').toLowerCase().includes(q) ||
-    (p.tags||'').toLowerCase().includes(q)
-  );
-  if(cat) posts = posts.filter(p=>p.category===cat);
-
-  posts.sort((a,b)=>{
-    if(sort==='newest')   return new Date(b.date||b.created)-new Date(a.date||a.created);
-    if(sort==='oldest')   return new Date(a.date||a.created)-new Date(b.date||b.created);
-    if(sort==='featured') return (b.featured?1:0)-(a.featured?1:0);
-    return 0;
-  });
-
-  count.textContent = posts.length + ' post'+(posts.length!==1?'s':'');
-
-  if(!posts.length){
-    grid.innerHTML=''; grid.style.display='none';
-    empty.style.display='block'; return;
+    // Try GitHub API first
+    const apiUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/`;
+    const res = await fetch(apiUrl);
+    if(!res.ok) throw new Error('API failed');
+    const files = await res.json();
+    
+    return files
+      .filter(f => f.type === 'file' && f.name.toLowerCase().endsWith('.html') && !EXCLUDE.includes(f.name.toLowerCase()))
+      .map(f => f.name)
+      .sort();
+  }catch(e){
+    console.warn('GitHub API failed, falling back to sitemap', e);
+    // Fallback: try sitemap.xml
+    try{
+      const s = await fetch('/sitemap.xml');
+      const txt = await s.text();
+      const urls = [...txt.matchAll(/<loc>([^<]+\.html)<\/loc>/gi)].map(m=>m[1]);
+      return urls.map(u => new URL(u).pathname.replace(/^\//,'')).filter(n=>!EXCLUDE.includes(n));
+    }catch{
+      // Last fallback: manual list
+      return ['spy-academy-review.html'];
+    }
   }
-  grid.style.display='grid'; empty.style.display='none';
-
-  grid.innerHTML = posts.map(p=>postCardHTML(p)).join('');
 }
 
-function postCardHTML(p){
-  const tags = (p.tags||'').split(',').map(t=>t.trim()).filter(Boolean);
-  const dateStr = p.date ? new Date(p.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+async function scrape(url){
+  try{
+    const res = await fetch(url, {cache:'no-store'});
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const text = doc.body.textContent || '';
+    
+    const title = doc.querySelector('meta[property="og:title"]')?.content ||
+                  doc.querySelector('h1')?.textContent?.trim() ||
+                  doc.title.split('—')[0].trim() ||
+                  url.replace('.html','').replace(/-/g,' ');
+    
+    let excerpt = doc.querySelector('meta[name="description"]')?.content || '';
+    if(!excerpt){
+      const p = [...doc.querySelectorAll('p')].find(p=>p.textContent.trim().length>60);
+      excerpt = p ? p.textContent.trim().slice(0,170)+'…' : '';
+    }
+    if(url.includes('spy-academy')){
+      const m = text.match(/An honest[^\.]{20,200}\./);
+      if(m) excerpt = m[0];
+    }
+    
+    let img = doc.querySelector('meta[property="og:image"]')?.content || doc.querySelector('img')?.src || '';
+    if(img && !img.startsWith('http')) img = new URL(img, new URL(url, location.href)).href;
+    if(!img) img = 'https://images.unsplash.com/photo-1555949963-aa79dcee981c?w=1200&q=80';
+    
+    const authorMatch = text.match(/✍️\s*([A-Za-z ]{3,30})/);
+    const source = authorMatch ? authorMatch[1].trim() : (doc.querySelector('meta[name="author"]')?.content || 'One Time Deals');
+    
+    const dateMatch = text.match(/Updated:\s*([A-Za-z]+ \d{1,2},? \d{4}|[A-Za-z]+ \d{4})/);
+    const date = dateMatch ? new Date(dateMatch[1]).toISOString().split('T')[0] : '';
+    
+    return {url, title, excerpt, image:img, source, date};
+  }catch(e){
+    return null;
+  }
+}
 
-  const thumb = p.image
-    ? `<img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" onerror="this.parentElement.innerHTML='${thumbPlaceholderInline()}';">`
-    : thumbPlaceholderInline();
-
-  return `
-  <a class="post-card" href="${esc(p.link)}" target="_blank" rel="noopener noreferrer">
-    <div class="post-thumb">
-      ${thumb}
-      ${p.category?`<span class="post-category-badge">${esc(p.category)}</span>`:''}
-      ${p.featured?`<span class="post-featured-flag">★ Featured</span>`:''}
-    </div>
-    <div class="post-body">
-      <div class="post-meta">
-        ${p.source?`<span class="post-source">${esc(p.source)}</span>`:''}
-        ${p.source&&dateStr?`<span class="post-meta-sep"></span>`:''}
-        ${dateStr?`<span>${dateStr}</span>`:''}
-      </div>
-      <h3 class="post-title">${esc(p.title)}</h3>
-      ${p.excerpt?`<p class="post-excerpt">${esc(p.excerpt)}</p>`:''}
-      <div class="post-footer">
-        <div class="post-tags">${tags.slice(0,3).map(t=>`<span class="post-tag">${esc(t)}</span>`).join('')}</div>
-        <span class="post-arrow">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-        </span>
-      </div>
+function card(p){
+  const d = p.date ? new Date(p.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+  return `<a class="card" href="${p.url}">
+    <div class="thumb"><img src="${p.image}" alt="" loading="lazy" onerror="this.src='https://images.unsplash.com/photo-1555949963-aa79dcee981c?w=800'"></div>
+    <div class="body">
+      <div class="meta"><span class="source">${p.source}</span>${d?`<span>•</span><span>${d}</span>`:''}</div>
+      <h3 class="title">${p.title}</h3>
+      <p class="excerpt">${p.excerpt}</p>
+      <div class="footer"><span class="badge">.html</span><span>${p.url}</span></div>
     </div>
   </a>`;
 }
 
-function thumbPlaceholderInline(){
-  return `<div class="post-thumb-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
-}
-
-/* ──────────────────────────────────────────────────────────────
-   RENDER: ADMIN LIST
-────────────────────────────────────────────────────────────── */
-async function renderAdminList(){
-  const posts = await loadPosts();
-  const el = document.getElementById('admin-post-list');
-
-  if(!posts.length){
-    el.innerHTML=`<div style="text-align:center;padding:40px 0;color:var(--ink-muted);font-size:14px">No posts yet. Create your first one →</div>`;
+async function init(){
+  const status = document.getElementById('status');
+  const grid = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+  
+  const files = await discoverHtmlFiles();
+  
+  if(!files.length){
+    status.innerHTML = '❌ No .html files found';
+    empty.style.display = 'block';
+    empty.textContent = 'Add .html files to your repo root';
     return;
   }
-
-  el.innerHTML = posts.slice().reverse().map(p=>{
-    const thumb = p.image
-      ? `<img class="admin-post-thumb" src="${esc(p.image)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">`
-      : '';
-    const placeholder = `<div class="admin-post-thumb-placeholder" style="${p.image?'display:none':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
-
-    return `
-    <div class="admin-post-item">
-      <div style="position:relative">
-        ${thumb}${placeholder}
-      </div>
-      <div class="admin-post-info">
-        <div class="admin-post-title">${esc(p.title)}</div>
-        <div class="admin-post-meta">
-          <span class="admin-post-status ${p.published?'status-published':'status-draft'}">${p.published?'Published':'Draft'}</span>
-          ${p.category?`<span>${esc(p.category)}</span>`:''}
-          ${p.source?`<span>${esc(p.source)}</span>`:''}
-        </div>
-      </div>
-      <div class="admin-item-btns">
-        <button class="icon-btn" title="Edit" onclick="editPost('${p.id}')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
-        <button class="icon-btn del" title="Delete" onclick="deletePost('${p.id}')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-        </button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-/* ──────────────────────────────────────────────────────────────
-   FORM: SAVE / EDIT / DELETE
-────────────────────────────────────────────────────────────── */
-async function savePost(e){
-  e.preventDefault();
-  const title = document.getElementById('f-title').value.trim();
-  const link  = document.getElementById('f-link').value.trim();
-  if(!title){ showToast('Title is required','error'); return; }
-  if(!link){  showToast('Link is required','error'); return; }
-
-  const posts = await loadPosts();
-
-  const data = {
-    id:        editingId || uid(),
-    created:   editingId ? (posts.find(p=>p.id===editingId)?.created||Date.now()) : Date.now(),
-    title,
-    link,
-    source:    document.getElementById('f-source').value.trim(),
-    category:  document.getElementById('f-category').value,
-    image:     document.getElementById('f-image').value.trim(),
-    excerpt:   document.getElementById('f-excerpt').value.trim(),
-    date:      document.getElementById('f-date').value,
-    tags:      document.getElementById('f-tags').value.trim(),
-    published: document.getElementById('f-published').checked,
-    featured:  document.getElementById('f-featured').checked,
-  };
-
-  if(editingId){
-    const idx = posts.findIndex(p=>p.id===editingId);
-    if(idx>-1) posts[idx]=data; else posts.push(data);
-    showToast('Post updated ✓','success');
-  } else {
-    posts.push(data);
-    showToast('Post saved ✓','success');
+  
+  status.innerHTML = `<div class="spinner"></div><span>Found ${files.length} pages — scraping metadata...</span>`;
+  
+  const posts = (await Promise.all(files.map(scrape))).filter(Boolean);
+  
+  status.style.display = 'none';
+  
+  if(!posts.length){
+    empty.style.display = 'block';
+    empty.textContent = 'Could not scrape any pages';
+    return;
   }
-
-  await savePosts(posts);
-  renderAdminList();
-  resetForm();
+  
+  // Sort newest first
+  posts.sort((a,b)=> new Date(b.date||0) - new Date(a.date||0));
+  
+  grid.innerHTML = posts.map(card).join('');
 }
 
-async function editPost(id){
-  const post = (await loadPosts()).find(p=>p.id===id);
-  if(!post) return;
-  editingId = id;
-  document.getElementById('f-title').value    = post.title||'';
-  document.getElementById('f-link').value     = post.link||'';
-  document.getElementById('f-source').value   = post.source||'';
-  document.getElementById('f-category').value = post.category||'';
-  document.getElementById('f-image').value    = post.image||'';
-  document.getElementById('f-excerpt').value  = post.excerpt||'';
-  document.getElementById('f-date').value     = post.date||'';
-  document.getElementById('f-tags').value     = post.tags||'';
-  document.getElementById('f-published').checked = !!post.published;
-  document.getElementById('f-featured').checked  = !!post.featured;
-  document.getElementById('form-title').textContent = 'Edit Post';
-  document.getElementById('form-mode-badge').textContent = 'EDITING';
-  document.getElementById('save-label').textContent = 'Update Post';
-  document.getElementById('f-title').focus();
-  document.querySelector('.admin-panel').scrollIntoView({behavior:'smooth',block:'start'});
-}
-
-async function deletePost(id){
-  if(!confirm('Delete this post? This cannot be undone.')) return;
-  const posts = (await loadPosts()).filter(p=>p.id!==id);
-  await savePosts(posts);
-  renderAdminList();
-  if(editingId===id) resetForm();
-  showToast('Post deleted','error');
-}
-
-function resetForm(){
-  editingId=null;
-  document.getElementById('post-form').reset();
-  document.getElementById('f-published').checked=true;
-  document.getElementById('form-title').textContent='New Post';
-  document.getElementById('form-mode-badge').textContent='CREATE';
-  document.getElementById('save-label').textContent='Save Post';
-}
-
-async function clearAllPosts(){
-  if(!confirm('Delete ALL posts? This cannot be undone.')) return;
-  await savePosts([]);
-  renderAdminList();
-  showToast('All posts cleared','error');
-}
-
-/* ──────────────────────────────────────────────────────────────
-   EXPORT / IMPORT
-────────────────────────────────────────────────────────────── */
-async function exportData(){
-  const data = {posts: await loadPosts(), exported:new Date().toISOString()};
-  const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-  const a = document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='otd-posts-'+Date.now()+'.json';
-  a.click();
-  showToast('Exported ✓','success');
-}
-
-async function importData(e){
-  const file = e.target.files[0]; if(!file) return;
-  const reader = new FileReader();
-  reader.onload = async ev=>{
-    try{
-      const d = JSON.parse(ev.target.result);
-      const posts = Array.isArray(d) ? d : (d.posts||[]);
-      if(!posts.length){ showToast('No posts found in file','error'); return; }
-      const existing = await loadPosts();
-      const merged = [...existing];
-      posts.forEach(p=>{ if(!merged.find(e=>e.id===p.id)) merged.push(p); });
-      await savePosts(merged);
-      renderAdminList();
-      showToast(`Imported ${posts.length} post(s) ✓`,'success');
-    }catch(err){ showToast('Invalid JSON file','error'); }
-  };
-  reader.readAsText(file);
-  e.target.value='';
-}
-
-/* ──────────────────────────────────────────────────────────────
-   SYNC COUNTS
-────────────────────────────────────────────────────────────── */
-function syncCounts(posts){
-  document.getElementById('admin-posts-count').textContent = posts.length;
-  document.getElementById('list-count').textContent = posts.length+' total';
-}
-
-/* ──────────────────────────────────────────────────────────────
-   UTILITIES
-────────────────────────────────────────────────────────────── */
-function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
-
-function esc(s){
-  if(!s) return '';
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-
-let toastTimer;
-function showToast(msg, type='success'){
-  const t=document.getElementById('toast');
-  const m=document.getElementById('toast-msg');
-  m.textContent=msg;
-  t.className='toast '+type+' show';
-  clearTimeout(toastTimer);
-  toastTimer=setTimeout(()=>t.className='toast',2800);
-}
-
-/* ──────────────────────────────────────────────────────────────
-   INIT
-────────────────────────────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', async ()=>{
-  // Set today's date as default
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('f-date').value = today;
-
-  // Warm the cache and sync counts
-  const posts = await loadPosts();
-  syncCounts(posts);
-
-  showView('posts');
-  setActiveNav('nav-posts');
-});
+document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
-</html>
+        </html>
+        
